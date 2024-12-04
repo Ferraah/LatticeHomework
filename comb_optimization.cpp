@@ -6,31 +6,45 @@
 #include <chrono>
 #include <algorithm>
 #include "parser.hpp"
+#include "bool_matrix.hpp"
 
-typedef std::vector<std::vector<bool>> Domains;
+//typedef std::vector<std::vector<bool>> Domains;
 
-const bool ENABLE_LOGGING = false;
+
+bool ENABLE_LOGGING = true;
 
 // N-Queens node
 struct Node {
-    int depth; // depth in the tree
-    Domains domains;
-    int index;
-    // Initialize the domains for each variable
-    Node(size_t N, int *u): depth(0), domains(N), index(0) {
-        domains.resize(N);
 
+    int depth; // depth in the tree
+
+    // Bool matrix for the domains of each variable
+    BoolMatrix domains;
+
+    // Initialize the domains for each variable
+    Node(size_t N, int *u): depth(0), domains(N, 0, nullptr) {
+
+        // Total elements if the domain matrix
+        size_t size = 0; 
+
+        // Biggest domain size
+        size_t max_u = 0;
         for (int i = 0; i < N; i++){
 
-            // Domain of variable i has flags for each value
-            // from 0 to upperbound
-            domains[i].resize(u[i]+1);
-            for (int j = 0; j <= u[i]; j++){
-                // At first, every variable can take any value in 
-                // the respective domain
-                domains[i][j] = true;
+            if (u[i]+1 > max_u){
+                max_u = u[i] + 1;
             }
+
+            // Upperbounds are included in the domain so we add 1
+            size += u[i] + 1; 
         }
+
+        // Allocate memory for the domain matrix and initialize it to true
+        bool *host_data = new bool[size]; 
+        memset(host_data, 1, size);
+
+        // Initialize the domain matrix wrapper
+        domains = BoolMatrix(N, max_u, host_data);
 
     }
 
@@ -45,122 +59,143 @@ void log_info(const std::string &message) {
     }
 }
 
-void print_domains(Domains &domains){
+void print_domains(BoolMatrix &domains){
     if(!ENABLE_LOGGING)
         return;
         
-    for(int i = 0; i < domains.size(); i++){
+    for(int i = 0; i < domains.rows; i++){
         std::cout << "Domain of variable " << i << ": ";
-        for(int j = 0; j < domains[i].size(); j++){
+        for(int j = 0; j < domains.cols; j++){
             std::cout << domains[i][j] << " ";
         }
         std::cout << std::endl;
     }
 }
 
-// Update the domains given the constraints
-// Returns true if the domains were updated
-bool update_domains(Domains &domains, Domains& new_domains, int **C){
+
+ 
+/**
+ * @brief Update the domains given the constraints
+ * @reture true if the domains were updated
+ */
+bool update_domains(BoolMatrix &domains, BoolMatrix& new_domains, int **C){
 
     bool updated = false;
 
-    new_domains = Domains(domains);
+    new_domains = BoolMatrix(domains);
 
-    // For every variable
-    for(int i = 0; i < domains.size(); i++){
+    // Vector containing the index of the rows containing 
+    // only one true value
+    std::vector<std::pair<size_t, size_t>> unique_true_values;
 
-        auto d = domains[i];
+    // For each row, find the index of the unique true value 
+    for(int i = 0; i < domains.rows; i++){
+        int j = domains.find_unique_true_index(i);
 
-        // We check the constraints that involve only one variable,
-        // because they are the only ones that can reduce the domains
-        // of other variables
-        if(std::count(d.begin(), d.end(), true) > 1)
+        // -1 means multiple true values found
+        if(j == -1)
             continue;
 
-        // Find the only value that is true in the domain
-        int value = std::find(d.begin(), d.end(), true) - d.begin();
+        // Save the pair (i, j) where i is the row index and j is the column index
+        unique_true_values.push_back(std::make_pair(i, j));
+    }
 
-        // If there is a constraint between i and j, then I remove
-        // the value from the domain of j            
-        for(int j = 0; j < domains.size(); j++){
+    // For each pair (i, j) in the vector
+    for(auto& p : unique_true_values){
+        int i = p.first;
+        int j = p.second;
 
-            // If the value is out of bounds, then we skip
-            if(value > domains[j].size())
-                continue;
-
-            if (C[i][j] == 1){
-                if(new_domains[j][value]){
-                    new_domains[j][value] = false;    
+        // If there is a constraint between i and k, then I remove the value
+        // at column j from the domain of the variables k that have a constraint
+        for(int k = 0; k < domains.rows; k++){
+            if(C[i][k] == 1){
+                if(new_domains[k][j]){
+                    new_domains[k][j] = false;
                     updated = true;
                 }
             }
         }
+
     }
 
     return updated;
 }
 
+/**
+ * @brief Generate children nodes by branching on the variable_i
+ * @param parent: Parent node
+ * @param variable_i: Variable to branch on
+ * @param C: Constraints matrix
+ * @return Children nodes
+ */
 std::vector<Node> generate_children(const Node& parent, int variable_i, int **C){
+
+    // Children nodes generated by branching on the variable_i
     std::vector<Node> children;
 
-    std::vector<bool> d = parent.domains[variable_i];
-    std::vector<int> true_values;
-    // Find all the true values in the domain of the variable
-    for(int i = 0; i < d.size(); i++){
-        if(d[i] == true)
-            true_values.push_back(i);
+    BoolMatrix d = parent.domains;
+    size_t rows = d.rows;
+    size_t cols = d.cols;
+
+    for(int j = 0; j < cols; j++){
+        if(d[variable_i][j] == true){
+            Node child(parent);
+            child.depth  = parent.depth + 1;
+            // Set the domain of the variable to be all zero apart from the unique valuec
+            memset(child.domains[variable_i], 0, cols);
+            child.domains[variable_i][j] = 1;
+            children.push_back(std::move(child));
+        }
     }
 
-    // Generate children with unitary domains
-    for(int i = 0; i < true_values.size(); i++){
-        Node child(parent);
-        child.domains[variable_i] = std::vector<bool>(child.domains[variable_i].size(), false);
-        child.domains[variable_i][true_values[i]] = true;
-        child.depth  = parent.depth + 1;
-        children.push_back(std::move(child));
-    }
     return children;
 }
 
+/**
+ * @brief Evaluate the node and branch if solution is not found
+ * @param parent: Parent node
+ * @param stack: Stack of other nodes
+ * @param C: Constraints matrix
+ * @param tree_loc: Number of nodes explored so far
+ * @param num_sol: Number of solutions found so far
+ */
 void evaluate_and_branch(Node& parent, std::stack<Node>& stack, int **C, size_t& tree_loc, size_t& num_sol){
 
+    // Copy node so we can update the domains
     Node updated_parent(parent);
     int curr_depth = parent.depth;
-    int n = parent.domains.size(); 
+    int n = parent.domains.rows; 
 
     log_info("Evaluating node at depth " + std::to_string(curr_depth));
 
-    // Update the domains using the constraints
+    // If we are at the last variable and the domain has only one value,
+    // because we have branched duing last iteration. It means that this is a solution.
     if(curr_depth == n){
         log_info("Solution found!");
         num_sol++;
         return;
     }
-    bool updated;
-    int a;
+
+    // Fixpoint: Update the domains until we can't update them anymore
+    bool updated = false;
     do{
         log_info("Updating domains...");
         updated = update_domains(updated_parent.domains, updated_parent.domains, C);
         print_domains(updated_parent.domains);
+
+        // Continue to update the domains until no restriction can be applied
     }while(updated);
 
     log_info("Updated domains: ");
     print_domains(updated_parent.domains);
+
+    // -- To continue, we necessarily need to branch --
 
     // Generate branches from current variable domain (curr_depth is also current variable index)
     std::vector<Node> children = generate_children(updated_parent, curr_depth, C);
 
     log_info("Number of children: " + std::to_string(children.size()));
 
-    // If there is only one child (meaning that the variable could not be branched)
-    // and we are at the last variable, then we have a solution
-    if(curr_depth == n - 1 && children.size() == 1){
-        log_info("Solution found!");
-        num_sol++;
-        return;
-    }
-
-    // Else, we branch 
     for(int i = 0; i < children.size(); i++){
         log_info("Pushing child " + std::to_string(i) + " with domain: ");
         print_domains(children[i].domains);
@@ -193,27 +228,26 @@ int main(int argc, char *argv[]){
     int **C = data.get_C();
 
     // Nodes tree
-    Node root(n, u);
-    assert(root.domains.size() == n);
-
     std::stack<Node> stack;
+
+    Node root(n, u);
     stack.push(std::move(root));
 
     print_domains(stack.top().domains);
 
     // Counters
-    size_t exploredTree = 0;
-    size_t exploredSol = 0;
+    size_t explored_nodes = 0;
+    size_t explored_sol = 0;
 
     // Domains for each variable
     while(stack.size() != 0){
         Node current(std::move(stack.top()));
         stack.pop();
-        evaluate_and_branch(current, stack, C, exploredTree, exploredSol);
+        evaluate_and_branch(current, stack, C, explored_nodes, explored_sol);
     }
 
-    std::cout << "Number of solutions: " << exploredSol << std::endl;
-    std::cout << "Number of nodes explored: " << exploredTree << std::endl;
+    std::cout << "Number of solutions: " << explored_sol << std::endl;
+    std::cout << "Number of nodes explored: " << explored_nodes << std::endl;
 
     return 0;
 }
