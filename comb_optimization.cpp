@@ -11,7 +11,7 @@
 //typedef std::vector<std::vector<bool>> Domains;
 
 
-bool ENABLE_LOGGING = true;
+bool ENABLE_LOGGING = false;
 
 // N-Queens node
 struct Node {
@@ -78,11 +78,10 @@ void print_domains(BoolMatrix &domains){
  * @brief Update the domains given the constraints
  * @reture true if the domains were updated
  */
-bool update_domains(BoolMatrix &domains, BoolMatrix& new_domains, int **C){
+bool update_domains(BoolMatrix &domains, int **C){
 
     bool updated = false;
 
-    new_domains = BoolMatrix(domains);
 
     // Vector containing the index of the rows containing 
     // only one true value
@@ -109,8 +108,8 @@ bool update_domains(BoolMatrix &domains, BoolMatrix& new_domains, int **C){
         // at column j from the domain of the variables k that have a constraint
         for(int k = 0; k < domains.rows; k++){
             if(C[i][k] == 1){
-                if(new_domains[k][j]){
-                    new_domains[k][j] = false;
+                if(domains[k][j]){
+                    domains[k][j] = false;
                     updated = true;
                 }
             }
@@ -162,7 +161,6 @@ std::vector<Node> generate_children(const Node& parent, int variable_i, int **C)
 void evaluate_and_branch(Node& parent, std::stack<Node>& stack, int **C, size_t& tree_loc, size_t& num_sol){
 
     // Copy node so we can update the domains
-    Node updated_parent(parent);
     int curr_depth = parent.depth;
     int n = parent.domains.rows; 
 
@@ -180,19 +178,19 @@ void evaluate_and_branch(Node& parent, std::stack<Node>& stack, int **C, size_t&
     bool updated = false;
     do{
         log_info("Updating domains...");
-        updated = update_domains(updated_parent.domains, updated_parent.domains, C);
-        print_domains(updated_parent.domains);
+        updated = update_domains(parent.domains, C);
+        print_domains(parent.domains);
 
         // Continue to update the domains until no restriction can be applied
     }while(updated);
 
     log_info("Updated domains: ");
-    print_domains(updated_parent.domains);
+    print_domains(parent.domains);
 
     // -- To continue, we necessarily need to branch --
 
     // Generate branches from current variable domain (curr_depth is also current variable index)
-    std::vector<Node> children = generate_children(updated_parent, curr_depth, C);
+    std::vector<Node> children = generate_children(parent, curr_depth, C);
 
     log_info("Number of children: " + std::to_string(children.size()));
 
@@ -216,7 +214,7 @@ int main(int argc, char *argv[]){
     if (data.read_input(filename.c_str())){
         data.print_n();
         data.print_u();
-        data.print_C();
+        //data.print_C();
     } else {
         std::cerr << "Failed to read input file: " << filename << std::endl;
         return 1;

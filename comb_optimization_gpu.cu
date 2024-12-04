@@ -30,8 +30,7 @@ struct Node {
 
     // Bool matrix for the domains of each variable
     BoolMatrixGPU d_domains;
-    size_t *d_true_indices_by_row;
-    bool *d_row_is_singleton;
+    //bool *d_row_is_singleton = nullptr;
 
     // Initialize the domains for each variable
     Node(size_t N, int *u): depth(0), d_domains(N, 0, nullptr) {
@@ -62,11 +61,7 @@ struct Node {
     }
 
     Node(const Node&) = default;
-    Node(Node&& other) noexcept : depth(other.depth), d_domains(std::move(other.d_domains)) {
-        size_t size = other.d_domains.rows * other.d_domains.cols * sizeof(bool);
-        _(cudaMalloc(&d_domains.data, size*sizeof(bool)));
-        _(cudaMemcpy(d_domains.data, other.d_domains.data, size, cudaMemcpyDeviceToDevice));
-    }
+    Node(Node&&) = default;
     Node() = default;
 };
 
@@ -130,24 +125,17 @@ __global__ void find_true_index_kernel(BoolMatrixGPU domain, size_t *d_true_indi
     
 }
 
-__global__ void update_domains_kernel(BoolMatrixGPU d_domains, int *d_C, bool *d_updated, size_t *d_last_true_row_indices, bool *d_row_is_singleton){
+__global__ void update_domains_kernel(bool *data, size_t rows, size_t cols, int *d_C, bool *d_updated, size_t *d_last_true_row_indices, bool *d_row_is_singleton){
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
-    int n = d_domains.rows;
-
+    size_t n = rows;
     if(i >= n*n)
         return;
 
     int row_a = i / n;
     int row_b = i % n;
     
-    /*
-    1 0 0
-    1 1 1
-    0 0 1
-    */
-
     if(d_C[row_a*n + row_b] == 1){
 
         // Find the column index of the unique true value in the row
@@ -157,11 +145,13 @@ __global__ void update_domains_kernel(BoolMatrixGPU d_domains, int *d_C, bool *d
         size_t c = d_last_true_row_indices[row_a];
         // If there is a constraint between the variables
         // Set that column in row_b to false
-        if(d_domains[row_b][c] == true){
-            d_domains[row_b][c] = false;
+        if(data[row_b*cols + c] == true){
+            data[row_b*cols +c] = false;
             *d_updated = true;
         }
     }
+
+    
 
 }
 
@@ -170,15 +160,12 @@ __global__ void update_domains_kernel(BoolMatrixGPU d_domains, int *d_C, bool *d
  * @brief Update the domains given the constraints
  * @reture true if the domains were updated
  */
-bool update_domains(BoolMatrixGPU &d_domains, BoolMatrixGPU& d_new_domains, int *d_C){
+bool update_domains(BoolMatrixGPU &d_domains, int *d_C){
 
     bool updated = false;
     size_t rows = d_domains.rows;
     //size_t cols = d_domains.cols;
 
-    assert(d_domains.data != nullptr);
-    d_new_domains = BoolMatrixGPU(d_domains);
-    assert(d_new_domains.data != nullptr);
     //-------------------- FIND THE SINGLETONS --------------------  
 
     // Last true value index for each row
@@ -197,7 +184,7 @@ bool update_domains(BoolMatrixGPU &d_domains, BoolMatrixGPU& d_new_domains, int 
 
 
     // For each row, find if they are singletons, and the index of the true value 
-    find_true_index_kernel<<<num_blocks, threads_per_block>>>(d_new_domains, d_last_true_row_indices, d_row_is_singleton, rows);
+    find_true_index_kernel<<<num_blocks, threads_per_block>>>(d_domains, d_last_true_row_indices, d_row_is_singleton, rows);
     _(cudaPeekAtLastError());
     _(cudaDeviceSynchronize());
 
@@ -211,19 +198,18 @@ bool update_domains(BoolMatrixGPU &d_domains, BoolMatrixGPU& d_new_domains, int 
     num_blocks = (total_threads + threads_per_block - 1) / threads_per_block;
 
     // Flag to indicate if the domains were updated
-    bool *d_updated = nullptr;
+    bool *d_updated;
     _(cudaMalloc(&d_updated, sizeof(bool))); 
     _(cudaMemset(d_updated, false, sizeof(bool)));
     
 
     // Update the domain following the constraints
-    update_domains_kernel<<<num_blocks, threads_per_block>>>(d_new_domains, d_C, d_updated, d_last_true_row_indices, d_row_is_singleton);
+    update_domains_kernel<<<num_blocks, threads_per_block>>>(d_domains.data, d_domains.rows, d_domains.cols, d_C, d_updated, d_last_true_row_indices, d_row_is_singleton);
     _(cudaPeekAtLastError());
     _(cudaDeviceSynchronize());
 
     // Copy the updated flag to the host
     _(cudaMemcpy(&updated, d_updated, sizeof(bool), cudaMemcpyDeviceToHost));
-
     // -----------------------------------------------------------
    
     // Free memory
@@ -282,7 +268,7 @@ std::vector<Node> generate_children(const Node& parent, int variable_i, int **C)
  * @param tree_loc: Number of nodes explored so far
  * @param num_sol: Number of solutions found so far
  */
-void evaluate_and_branch(Node parent, std::stack<Node>& stack, int *d_C, int **C, size_t& tree_loc, size_t& num_sol){
+void evaluate_and_branch(Node &parent, std::stack<Node>& stack, int *d_C, int **C, size_t& tree_loc, size_t& num_sol){
 
     // Copy node so we can update the domains
     int curr_depth = parent.depth;
@@ -299,23 +285,25 @@ void evaluate_and_branch(Node parent, std::stack<Node>& stack, int *d_C, int **C
         return;
     }
 
-    // Fixpoint: Update the domains until we can't update them anymore
-    //_(cudaMemcpy(parent.d_domains.data, parent.domains.data, rows*cols*sizeof(bool), cudaMemcpyHostToDevice));
+
+    //-------------------- FIXPOINT -------------------- 
 
     bool updated = false;
     do{
+        // Fixpoint: Update the domains until we can't update them anymore
         log_info("Updating domains...");
-        updated = update_domains(parent.d_domains, parent.d_domains, d_C);
+        updated = update_domains(parent.d_domains, d_C);
         print_domains(parent.d_domains);
 
         // Continue to update the domains until no restriction can be applied
     }while(updated);
 
     log_info("Updated domains: ");
-    //_(cudaMemcpy(parent.domains.data, parent.d_domains.data, rows*cols*sizeof(bool), cudaMemcpyDeviceToHost));
     print_domains(parent.d_domains);
 
-    // -- To continue, we necessarily need to branch --
+    // ------------------------------------------------
+
+    // To continue, we necessarily need to branch 
 
     // Generate branches from current variable domain (curr_depth is also current variable index)
     std::vector<Node> children = generate_children(parent, curr_depth, C);
@@ -328,6 +316,7 @@ void evaluate_and_branch(Node parent, std::stack<Node>& stack, int *d_C, int **C
         stack.push(std::move(children[i]));
         tree_loc++;
     }
+    // ------------------------------------------------
 }
 
 int main(int argc, char *argv[]){

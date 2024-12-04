@@ -31,9 +31,20 @@ struct BoolMatrixGPU{
 
     }
 
+    // Deep copy constructor
     BoolMatrixGPU(const BoolMatrixGPU& other)
-        : rows(other.rows), cols(other.cols), data(other.data) {}
+        : rows(other.rows), cols(other.cols) {
+        size_t size = rows * cols;
+        _(cudaMalloc(&data, size * sizeof(bool)));
+        _(cudaMemcpy(data, other.data, size * sizeof(bool), cudaMemcpyDeviceToDevice));
+    }
 
+    // Destructor
+    ~BoolMatrixGPU() {
+        if(data != nullptr){
+            _(cudaFree(data));
+        }
+    }
 
     // Overload operator[] for 2D indexing
     __host__ __device__ bool* operator[](size_t row) {
