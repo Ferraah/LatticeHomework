@@ -8,10 +8,8 @@
 #include "parser.hpp"
 #include "bool_matrix.hpp"
 
-//typedef std::vector<std::vector<bool>> Domains;
 
-
-bool ENABLE_LOGGING = true;
+bool ENABLE_LOGGING = false;
 
 // N-Queens node
 struct Node {
@@ -190,7 +188,7 @@ int main(int argc, char *argv[]){
     Data data;
     if (data.read_input(filename.c_str())){
         data.print_n();
-        data.print_u();
+        //data.print_u();
         //data.print_C();
     } else {
         std::cerr << "Failed to read input file: " << filename << std::endl;

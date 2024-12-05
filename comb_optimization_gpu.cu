@@ -12,8 +12,7 @@
 #include "gpuAssert.hpp"
 
 
-
-bool ENABLE_LOGGING = true;
+bool ENABLE_LOGGING = false;
 
 // N-Queens node
 struct Node {
@@ -74,10 +73,11 @@ __global__ void find_true_index_kernel(BoolMatrixGPU domain, size_t *d_true_indi
     assert(domain.cols != nullptr);
 
     size_t row_len = domain.cols[i];
+    size_t *d_offsets = domain.d_offsets;
 
     int count = 0;
     for(int j = 0; j < row_len; j++){
-        if(domain.data[row_len+j] == true){
+        if(domain.data[d_offsets[i] + j] == true){
             d_true_indices[i] = j;
             count ++;
         }
@@ -108,7 +108,7 @@ __global__ void update_domains_kernel(bool *data, size_t rows, size_t *d_offsets
         // If there is a constraint between the variables
         // Set that column in row_b to false
         if(data[d_offsets[row_b] + c] == true){
-            data[d_offsets[row_b] +c] = false;
+            data[d_offsets[row_b] + c] = false;
             *d_updated = true;
         }
     }
@@ -294,8 +294,8 @@ int main(int argc, char *argv[]){
     Data data;
     if (data.read_input(filename.c_str())){
         data.print_n();
-        data.print_u();
-        data.print_C();
+        //data.print_u();
+        //data.print_C();
     } else {
         std::cerr << "Failed to read input file: " << filename << std::endl;
         return 1;

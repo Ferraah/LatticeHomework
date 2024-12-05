@@ -44,7 +44,7 @@ struct BoolMatrix
 
             cols = new size_t[rows];
             for(size_t i = 0; i < rows; i++){
-                cols[i] = u[i];
+                cols[i] = u[i]+1;
             }
 
             assert(cols != nullptr);
@@ -142,22 +142,13 @@ struct BoolMatrix
     // Overload operator[] for 2D indexing
     bool *operator[](size_t row)
     {
-        size_t offset = 0;
-        for(size_t i = 0; i < row; i++){
-            offset += cols[i];
-        }
-        return &data[offset]; // Return pointer to the start of the row
+        return &data[offsets[row]]; // Return pointer to the start of the row
     }
 
     // Const version for read-only access
     const bool *operator[](size_t row) const
     {
-
-        size_t offset = 0;
-        for(size_t i = 0; i < row; i++){
-            offset += cols[i];
-        }
-        return &data[offset];
+        return &data[offsets[row]];
     }
 
     // Destructor

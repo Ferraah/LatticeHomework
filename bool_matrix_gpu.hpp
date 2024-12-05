@@ -21,7 +21,7 @@ struct BoolMatrixGPU{
             
             size_t *host_cols = new size_t[rows];
             for(size_t i = 0; i < rows; i++){
-                host_cols[i] = u[i];
+                host_cols[i] = u[i]+1;
             }
 
             _(cudaMemcpy(cols, host_cols, rows * sizeof(size_t), cudaMemcpyHostToDevice));
@@ -31,14 +31,14 @@ struct BoolMatrixGPU{
             offsets = new size_t[rows];
             offsets[0] = 0;
             for(size_t i = 1; i < rows; i++){
-                offsets[i] = offsets[i-1] + u[i-1];
+                offsets[i] = offsets[i-1] + host_cols[i-1];
             }
             
             _(cudaMalloc(&d_offsets, rows * sizeof(size_t)));
             _(cudaMemcpy(d_offsets, offsets, rows * sizeof(size_t), cudaMemcpyHostToDevice));
 
             // Matrix initialization
-            size = offsets[rows-1] + u[rows-1];
+            size = offsets[rows-1] + host_cols[rows-1];
             _(cudaMalloc(&data, size * sizeof(bool)));
             _(cudaMemset(data, 1, size * sizeof(bool)));
 
@@ -59,8 +59,8 @@ struct BoolMatrixGPU{
         _(cudaMemcpy(data, other.data, size * sizeof(bool), cudaMemcpyHostToDevice));
         _(cudaMalloc(&cols, rows * sizeof(size_t)));
         _(cudaMemcpy(cols, other.cols, rows * sizeof(size_t), cudaMemcpyHostToDevice));
-        _(cudaMalloc(&offsets, rows * sizeof(size_t)));
-        _(cudaMemcpy(offsets, other.offsets, rows * sizeof(size_t), cudaMemcpyHostToDevice));
+        _(cudaMalloc(&d_offsets, rows * sizeof(size_t)));
+        _(cudaMemcpy(d_offsets, other.offsets, rows * sizeof(size_t), cudaMemcpyHostToDevice));
 
     }
 
