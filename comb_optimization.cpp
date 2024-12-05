@@ -22,25 +22,7 @@ struct Node {
     BoolMatrix domains;
 
     // Initialize the domains for each variable
-    Node(size_t N, int *u): depth(0), domains(BoolMatrix(N, u)) {
-
-        depth = 0;
-        // Total elements if the domain matrix
-        size_t size = 0; 
-
-        // Biggest domain size
-        size_t max_u = 0;
-        for (int i = 0; i < N; i++){
-
-            if (u[i]+1 > max_u){
-                max_u = u[i] + 1;
-            }
-
-            // Upperbounds are included in the domain so we add 1
-            size += u[i] + 1; 
-        }
-
-    }
+    Node(size_t N, int *u): depth(0), domains(BoolMatrix(N, u)){}
 
     Node(size_t N, BoolMatrix domains) : depth(0), domains(domains) {}
     Node(const Node&) = default;

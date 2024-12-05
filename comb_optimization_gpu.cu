@@ -1,3 +1,4 @@
+
 #include <iostream>
 #include <stack>
 #include <vector>
@@ -8,20 +9,11 @@
 #include "parser.hpp"
 #include "bool_matrix.hpp"
 #include "bool_matrix_gpu.hpp"
-
-// #define _(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-// inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
-// {
-//    if (code != cudaSuccess) 
-//    {
-    //   fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-    //   if (abort) exit(code);
-//    }
-// }
+#include "gpuAssert.hpp"
 
 
 
-bool ENABLE_LOGGING = false;
+bool ENABLE_LOGGING = true;
 
 // N-Queens node
 struct Node {
@@ -33,32 +25,7 @@ struct Node {
     //bool *d_row_is_singleton = nullptr;
 
     // Initialize the domains for each variable
-    Node(size_t N, int *u): depth(0), d_domains(N, 0, nullptr) {
-
-        // Total elements if the domain matrix
-        size_t size = 0; 
-
-        // Biggest domain size
-        size_t max_u = 0;
-        for (int i = 0; i < N; i++){
-
-            if (u[i]+1 > max_u){
-                max_u = u[i] + 1;
-            }
-
-            // Upperbounds are included in the domain so we add 1
-            size += u[i] + 1; 
-        }
-
-        // Allocate memory for the domain matrix and initialize it to true
-        bool *device_data;
-        _(cudaMalloc(&device_data, size*sizeof(bool)));
-        _(cudaMemset(device_data, true, size));
-
-        // Initialize the domain matrix wrapper
-        d_domains = BoolMatrixGPU(N, max_u, device_data);
-
-    }
+    Node(size_t N, int *u): depth(0), d_domains(BoolMatrixGPU(N, u)) {}
 
     Node(const Node&) = default;
     Node(Node&&) = default;
@@ -72,27 +39,29 @@ void log_info(const std::string &message) {
 }
 
 void print_domains(BoolMatrixGPU d_domains){
+
     if(!ENABLE_LOGGING)
         return;
 
-    bool *data = new bool[d_domains.rows*d_domains.cols];
-    assert(d_domains.data != nullptr);
-    assert(data != nullptr);
-    
-    _(cudaMemcpy(data, d_domains.data, d_domains.rows*d_domains.cols*sizeof(bool), cudaMemcpyDeviceToHost));
-    BoolMatrix test_matrix(d_domains.rows, d_domains.cols, data);
-    assert(test_matrix.data != nullptr);
 
+    size_t rows = d_domains.rows;
+    size_t *cols = new size_t[rows];
+    bool *data = new bool[d_domains.size];
+    _(cudaMemcpy(cols, d_domains.cols, rows*sizeof(size_t), cudaMemcpyDeviceToHost));
+    _(cudaMemcpy(data, d_domains.data, d_domains.size*sizeof(bool), cudaMemcpyDeviceToHost));
+    BoolMatrix test_matrix(rows, cols);
+    test_matrix.data = data;
+
+    assert(test_matrix.data != nullptr);
 
     for(int i = 0; i < test_matrix.rows; i++){
         std::cout << "Domain of variable " << i << ": ";
-        for(int j = 0; j < test_matrix.cols; j++){
+        for(int j = 0; j < test_matrix.cols[i]; j++){
             std::cout << test_matrix[i][j] << " ";
         }
         std::cout << std::endl;
     }
 
-    delete[] data;
 }
 
 __global__ void find_true_index_kernel(BoolMatrixGPU domain, size_t *d_true_indices, bool *d_row_is_singleton, size_t n){
@@ -101,9 +70,14 @@ __global__ void find_true_index_kernel(BoolMatrixGPU domain, size_t *d_true_indi
     if(i >= n)
         return;
 
+    assert(domain.data != nullptr);
+    assert(domain.cols != nullptr);
+
+    size_t row_len = domain.cols[i];
+
     int count = 0;
-    for(int j = 0; j < domain.cols; j++){
-        if(domain[i][j] == true){
+    for(int j = 0; j < row_len; j++){
+        if(domain.data[row_len+j] == true){
             d_true_indices[i] = j;
             count ++;
         }
@@ -113,7 +87,7 @@ __global__ void find_true_index_kernel(BoolMatrixGPU domain, size_t *d_true_indi
     
 }
 
-__global__ void update_domains_kernel(bool *data, size_t rows, size_t cols, int *d_C, bool *d_updated, size_t *d_last_true_row_indices, bool *d_row_is_singleton){
+__global__ void update_domains_kernel(bool *data, size_t rows, size_t *d_offsets, int *d_C, bool *d_updated, size_t *d_last_true_row_indices, bool *d_row_is_singleton){
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -133,8 +107,8 @@ __global__ void update_domains_kernel(bool *data, size_t rows, size_t cols, int 
         size_t c = d_last_true_row_indices[row_a];
         // If there is a constraint between the variables
         // Set that column in row_b to false
-        if(data[row_b*cols + c] == true){
-            data[row_b*cols +c] = false;
+        if(data[d_offsets[row_b] + c] == true){
+            data[d_offsets[row_b] +c] = false;
             *d_updated = true;
         }
     }
@@ -192,7 +166,7 @@ bool update_domains(BoolMatrixGPU &d_domains, int *d_C){
     
 
     // Update the domain following the constraints
-    update_domains_kernel<<<num_blocks, threads_per_block>>>(d_domains.data, d_domains.rows, d_domains.cols, d_C, d_updated, d_last_true_row_indices, d_row_is_singleton);
+    update_domains_kernel<<<num_blocks, threads_per_block>>>(d_domains.data, d_domains.rows, d_domains.d_offsets, d_C, d_updated, d_last_true_row_indices, d_row_is_singleton);
     _(cudaPeekAtLastError());
     _(cudaDeviceSynchronize());
 
@@ -223,14 +197,16 @@ std::vector<Node> generate_children(const Node& parent, int variable_i, int **C)
    
     // Get Boolean matrix GPU from the parent node
     BoolMatrixGPU d = parent.d_domains;
-    size_t cols = d.cols;
 
     // Copy the row of the variable to branch on, on the host
-    bool *i_row = new bool[cols];
-    _(cudaMemcpy(i_row, d[variable_i], d.cols*sizeof(bool), cudaMemcpyDeviceToHost));
+    size_t row_len;
+    _(cudaMemcpy(&row_len, d.cols + variable_i, sizeof(size_t), cudaMemcpyDeviceToHost));
+
+    bool *i_row = new bool[row_len];
+    _(cudaMemcpy(i_row, d[variable_i], row_len*sizeof(bool), cudaMemcpyDeviceToHost));
 
     // For each true value in the domain of the variable, create a child node
-    for(int j = 0; j < cols; j++){
+    for(int j = 0; j < row_len; j++){
         if(i_row[j] == true){
 
             // New child node
@@ -238,7 +214,7 @@ std::vector<Node> generate_children(const Node& parent, int variable_i, int **C)
             child.depth  = parent.depth + 1;
          
             // Set the domain of the variable to be all zero apart from the unique valuec
-            _(cudaMemset(child.d_domains[variable_i], false, cols));
+            _(cudaMemset(child.d_domains[variable_i], false, row_len));
             _(cudaMemset(child.d_domains[variable_i] + j, true, 1));
 
             children.push_back(std::move(child));

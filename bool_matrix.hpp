@@ -1,21 +1,50 @@
+
+#ifndef BOOL_MATRIX_HPP
+#define BOOL_MATRIX_HPP
+
 #include <iostream>
 #include <cuda_runtime.h>
+#include "gpuAssert.hpp"
+
+
 
 struct BoolMatrix
 {
     size_t rows;
+    size_t size;
     size_t *cols = nullptr;
     size_t *offsets = nullptr; // Pointer to the start of each row
     bool *data = nullptr; // Pointer to raw data
 
+// Constructor (uses externally allocated memory)
+    BoolMatrix(size_t rows, size_t *cols)
+        : rows(rows), cols(cols){
+
+        assert(cols != nullptr);
+        assert(rows > 0);
+
+        // Create the offsets array
+        offsets = new size_t[rows];
+        offsets[0] = 0;
+        for(size_t i = 1; i < rows; i++){
+            offsets[i] = offsets[i-1] + cols[i-1];
+        }
+
+        // Matrix initialization
+        size = offsets[rows-1] + cols[rows-1];
+        data = new bool[size]; 
+        memset(data, 1, size);
+
+    }
+
 
     // Constructor (uses externally allocated memory)
-    BoolMatrix(size_t rows, int *cols_int)
-        : rows(rows){
+    BoolMatrix(size_t rows, int *u)
+        : rows(rows), size(0){
 
             cols = new size_t[rows];
             for(size_t i = 0; i < rows; i++){
-                cols[i] = cols_int[i];
+                cols[i] = u[i];
             }
 
             assert(cols != nullptr);
@@ -28,7 +57,7 @@ struct BoolMatrix
             }
 
             // Matrix initialization
-            size_t size = offsets[rows-1] + cols[rows-1];
+            size = offsets[rows-1] + cols[rows-1];
             data = new bool[size]; 
             memset(data, 1, size);
         }
@@ -60,6 +89,7 @@ struct BoolMatrix
         }
 
     }
+
 
     // Move constructor
     BoolMatrix(BoolMatrix &&other) noexcept
@@ -145,3 +175,4 @@ struct BoolMatrix
         }
     }
 };
+#endif
