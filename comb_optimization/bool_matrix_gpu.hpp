@@ -49,6 +49,10 @@ struct BoolMatrixGPU{
     BoolMatrixGPU(const BoolMatrix& other)
         : rows(other.rows), size(other.size) { 
         
+        cudaStream_t stream[3];
+        for(int i = 0; i < 3; i++){
+            _(cudaStreamCreate(&stream[i]));
+        }
 
         assert(other.data != nullptr);
         assert(other.cols != nullptr);
@@ -56,11 +60,16 @@ struct BoolMatrixGPU{
 
 
         _(cudaMalloc(&data, size * sizeof(bool)));
-        _(cudaMemcpy(data, other.data, size * sizeof(bool), cudaMemcpyHostToDevice));
+        _(cudaMemcpyAsync(data, other.data, size * sizeof(bool), cudaMemcpyHostToDevice, stream[0]));
         _(cudaMalloc(&cols, rows * sizeof(size_t)));
-        _(cudaMemcpy(cols, other.cols, rows * sizeof(size_t), cudaMemcpyHostToDevice));
+        _(cudaMemcpyAsync(cols, other.cols, rows * sizeof(size_t), cudaMemcpyHostToDevice, stream[1]));
         _(cudaMalloc(&d_offsets, rows * sizeof(size_t)));
-        _(cudaMemcpy(d_offsets, other.offsets, rows * sizeof(size_t), cudaMemcpyHostToDevice));
+        _(cudaMemcpyAsync(d_offsets, other.offsets, rows * sizeof(size_t), cudaMemcpyHostToDevice, stream[2]));
+        
+        for(int i = 0; i < 3; i++){
+            _(cudaStreamSynchronize(stream[i]));
+            _(cudaStreamDestroy(stream[i]));
+        }
 
     }
 

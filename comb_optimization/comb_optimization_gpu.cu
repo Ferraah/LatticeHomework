@@ -98,14 +98,14 @@ __global__ void update_domains_kernel(bool *data, size_t rows, size_t *d_offsets
     int row_a = i / n;
     int row_b = i % n;
     
+    // If there is a constraint between the variables
     if(d_C[row_a*n + row_b] == 1){
 
-        // Find the column index of the unique true value in the row
+        // Proceed only if it is a singleton
         if(!d_row_is_singleton[row_a])
             return;
 
         size_t c = d_last_true_row_indices[row_a];
-        // If there is a constraint between the variables
         // Set that column in row_b to false
         if(data[d_offsets[row_b] + c] == true){
             data[d_offsets[row_b] + c] = false;
@@ -208,7 +208,6 @@ std::vector<Node> generate_children(const Node& parent, int variable_i, int **C)
     // For each true value in the domain of the variable, create a child node
     for(int j = 0; j < row_len; j++){
         if(i_row[j] == true){
-
             // New child node
             Node child(parent);
             child.depth  = parent.depth + 1;

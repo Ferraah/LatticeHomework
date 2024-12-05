@@ -74,12 +74,12 @@ bool update_domains(BoolMatrix &domains, int **C){
         unique_true_values.push_back(std::make_pair(i, j));
     }
 
-    // For each pair (i, j) in the vector
+    // For each singleton
     for(auto& p : unique_true_values){
-        int i = p.first;
-        int j = p.second;
+        int i = p.first; 
+        int j = p.second; // Column where the unique true value is found
 
-        // If there is a constraint between i and k, then I remove the value
+        // If there is a constraint between i (singleton variable) and k, then I remove the value
         // at column j from the domain of the variables k that have a constraint
         for(int k = 0; k < domains.rows; k++){
             if(C[i][k] == 1){

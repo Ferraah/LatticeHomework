@@ -95,7 +95,6 @@ void reduce_min_2(int *input, int N, int *min){
         }
     }
 
-
 }
 
 
