@@ -95,18 +95,6 @@ void print_domains(BoolMatrixGPU d_domains){
     delete[] data;
 }
 
-void print_domains(BoolMatrix &domains){
-    if(!ENABLE_LOGGING)
-        return;
-
-    for(int i = 0; i < domains.rows; i++){
-        std::cout << "Domain of variable " << i << ": ";
-        for(int j = 0; j < domains.cols; j++){
-            std::cout << domains[i][j] << " ";
-        }
-        std::cout << std::endl;
-    }
-}
 __global__ void find_true_index_kernel(BoolMatrixGPU domain, size_t *d_true_indices, bool *d_row_is_singleton, size_t n){
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 

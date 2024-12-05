@@ -11,7 +11,7 @@
 //typedef std::vector<std::vector<bool>> Domains;
 
 
-bool ENABLE_LOGGING = false;
+bool ENABLE_LOGGING = true;
 
 // N-Queens node
 struct Node {
@@ -22,8 +22,9 @@ struct Node {
     BoolMatrix domains;
 
     // Initialize the domains for each variable
-    Node(size_t N, int *u): depth(0), domains(N, 0, nullptr) {
+    Node(size_t N, int *u): depth(0), domains(BoolMatrix(N, u)) {
 
+        depth = 0;
         // Total elements if the domain matrix
         size_t size = 0; 
 
@@ -39,15 +40,9 @@ struct Node {
             size += u[i] + 1; 
         }
 
-        // Allocate memory for the domain matrix and initialize it to true
-        bool *host_data = new bool[size]; 
-        memset(host_data, 1, size);
-
-        // Initialize the domain matrix wrapper
-        domains = BoolMatrix(N, max_u, host_data);
-
     }
 
+    Node(size_t N, BoolMatrix domains) : depth(0), domains(domains) {}
     Node(const Node&) = default;
     Node(Node&&) = default;
     Node() = default;
@@ -65,7 +60,7 @@ void print_domains(BoolMatrix &domains){
         
     for(int i = 0; i < domains.rows; i++){
         std::cout << "Domain of variable " << i << ": ";
-        for(int j = 0; j < domains.cols; j++){
+        for(int j = 0; j < domains.cols[i]; j++){
             std::cout << domains[i][j] << " ";
         }
         std::cout << std::endl;
@@ -134,14 +129,14 @@ std::vector<Node> generate_children(const Node& parent, int variable_i, int **C)
 
     BoolMatrix d = parent.domains;
     size_t rows = d.rows;
-    size_t cols = d.cols;
+    size_t *cols = d.cols;
 
-    for(int j = 0; j < cols; j++){
+    for(int j = 0; j < cols[variable_i]; j++){
         if(d[variable_i][j] == true){
             Node child(parent);
             child.depth  = parent.depth + 1;
             // Set the domain of the variable to be all zero apart from the unique valuec
-            memset(child.domains[variable_i], 0, cols);
+            memset(child.domains[variable_i], 0, cols[variable_i]);
             child.domains[variable_i][j] = 1;
             children.push_back(std::move(child));
         }
@@ -220,6 +215,7 @@ int main(int argc, char *argv[]){
         return 1;
     }
 
+
     // Number of variables
     int n = data.get_n();
     int *u = data.get_u();
@@ -229,6 +225,7 @@ int main(int argc, char *argv[]){
     std::stack<Node> stack;
 
     Node root(n, u);
+
     stack.push(std::move(root));
 
     print_domains(stack.top().domains);
